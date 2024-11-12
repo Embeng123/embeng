@@ -1,848 +1,842 @@
-// worker.js
-import { connect } from "cloudflare:sockets";
-var listProxy = [
-  { path: "/id1", proxy: "111.95.40.14:32414" },
-  { path: "/id2", proxy: "35.219.15.90:443" },
-  { path: "/id3", proxy: "165.154.48.233:587" },
-  { path: "/id4", proxy: "43.133.145.156:53136" },  
-  { path: "/sg-byt", proxy: "89.34.227.98:8080" },
-  { path: "/sgtcc", proxy: "43.134.239.19:443" },
-  { path: "/sgtencent", proxy: "43.134.239.19:443" },
-  { path: "/sgalibaba", proxy: "8.219.50.5:29220" },
-  { path: "/sggreen", proxy: "5.34.176.119:81" },
-  { path: "/sgakamai", proxy: "143.42.68.97:17055" },
-  { path: "/sgVultr", proxy: "139.180.144.170:666" },
-  { path: "/GCPID", proxy: "35.219.50.99:443" },
-  { path: "/sgovhsas", proxy: "51.79.158.126:443" },
-  { path: "/sgdo", proxy: "159.223.34.97:4433" },
-  { path: "/sgLatitude", proxy: "64.49.14.239:443" },
-  { path: "/sgmegalayer", proxy: "103.180.161.10:587" },
-  { path: "/sgoracle", proxy: "138.2.77.179:30018" },
-  { path: "/sgbelnet", proxy: "194.36.179.237:443" },
-  { path: "/sgamazon", proxy: "54.251.167.101:443" }
-  //tambahin sendiri
-];
-var proxyIP;
-var proxyPort;
-var worker_default = {
-  async fetch(request, ctx) {
-    try {
-      proxyIP = proxyIP;
-      const url = new URL(request.url);
-      const upgradeHeader = request.headers.get("Upgrade");
-      for (const entry of listProxy) {
-        if (url.pathname === entry.path) {
-          [proxyIP, proxyPort] = entry.proxy.split(':');
-          break;
-        }
-      }
-      if (upgradeHeader === "websocket" && proxyIP) {
-        return await vlessOverWSHandler(request);
-      }
-      const allConfig = await getAllConfigVless(request.headers.get("Host"));
-      return new Response(allConfig, {
-        status: 200,
-        headers: { "Content-Type": "text/html;charset=utf-8" }
-      });
-    } catch (err) {
-      return new Response(err.toString(), { status: 500 });
+export default {
+  async fetch(request, env) {
+    const { pathname } = new URL(request.url);
+    const domain = env.DOMAIN;
+    const DATABASE = env.DATABASE;
+    const USERNAME = env.USERNAME;
+    const PASSWORD = env.PASSWORD;
+    const adminPath = env.ADMIN_PATH;
+    const enableAuth = env.ENABLE_AUTH === 'true';
+    const TG_BOT_TOKEN = env.TG_BOT_TOKEN;
+    const TG_CHAT_ID = env.TG_CHAT_ID;
+
+    switch (pathname) {
+      case '/':
+        return await handleRootRequest(request, USERNAME, PASSWORD, enableAuth);
+      case `/${adminPath}`:
+        return await handleAdminRequest(DATABASE, request, USERNAME, PASSWORD);
+      case '/upload':
+        return request.method === 'POST' ? await handleUploadRequest(request, DATABASE, enableAuth, USERNAME, PASSWORD, domain, TG_BOT_TOKEN, TG_CHAT_ID) : new Response('Method Not Allowed', { status: 405 });
+      case '/bing-images':
+        return handleBingImagesRequest();
+      case '/delete-images':
+        return handleDeleteImagesRequest(request, DATABASE);
+      default:
+        return await handleImageRequest(request, DATABASE, TG_BOT_TOKEN);
     }
   }
 };
-async function getAllConfigVless(hostName) {
-  try {
-    let vlessConfigs = "";
-    let clashConfigs = "";
-    for (const entry of listProxy) {
-      const { path, proxy } = entry;
-      const [ipOnly] = proxy.split(':');
-      const response = await fetch(`http://ip-api.com/json/${ipOnly}`);
-      const data = await response.json();
-      const pathFixed = encodeURIComponent(path);
-      const vlessTls = `vless://${generateUUIDv4()}@${hostName}:443?encryption=none&security=tls&sni=${hostName}&fp=randomized&type=ws&host=${hostName}&path=${pathFixed}#${data.isp} (${data.countryCode})`;
-      const vlessNtls = `vless://${generateUUIDv4()}@${hostName}:80?path=${pathFixed}&security=none&encryption=none&host=${hostName}&fp=randomized&type=ws&sni=${hostName}#${data.isp} (${data.countryCode})`;
-      const vlessTlsFixed = vlessTls.replace(/ /g, "+");
-      const vlessNtlsFixed = vlessNtls.replace(/ /g, "+");
-      vlessConfigs += `<div class="config-section">
-    <p><strong>ISP  :  ${data.isp} (${data.countryCode}) </strong> </p>
-    <hr />
-    <div class="config-toggle">
-        <button class="button" onclick="toggleConfig(this, 'show vless', 'hide vless')">Show Vless</button>
-        <div class="config-content">
-            <div class="config-block">
-                <h3>TLS:</h3>
-                <p class="config">${vlessTlsFixed}</p>
-                <button class="button" onclick='copyToClipboard("${vlessTlsFixed}")'><i class="fa fa-clipboard"></i>Copy</button>
-            </div>
-            <hr />
-            <div class="config-block">
-                <h3>NTLS:</h3>
-                <p class="config">${vlessNtlsFixed}</p>
-                <button class="button" onclick='copyToClipboard("${vlessNtlsFixed}")'><i class="fa fa-clipboard"></i>Copy</button>
-            </div>
-            <hr />
-        </div>
-    </div>
-</div>
-<hr class="config-divider" />
-`;
-    }
-    const htmlConfigs = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Vless | Embeng | CLoudFlare</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" integrity="sha512-Fo3rlrZj/k7ujTnHg4C+6PCWJ+8zzHcXQjXGp6n5Yh9rX0x5fOdPaOqO+e2X4R5C1aE/BSqPIG+8y3O6APa8w==" crossorigin="anonymous" referrerpolicy="no-referrer" />
-    <link rel="icon" href="https://raw.githubusercontent.com/AFRcloud/BG/main/icons8-film-noir-80.png" type="image/png">
-    <style>
-    body {
-    margin: 0;
-    padding: 0;
-    font-family: 'Poppins', sans-serif;
-    color: #f5f5f5;
-    background-color: #2d3b48; /* Dark Blue-gray */
-    display: flex;
-    align-items: center;
-    flex-direction: column;
-    min-height: 100vh;
-    overflow: hidden;
+
+let isAuthenticated = false;
+
+function authenticate(request, USERNAME, PASSWORD) {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader) return false;
+  return isValidCredentials(authHeader, USERNAME, PASSWORD);
 }
 
-.container {
-    width: 100%;
-    max-width: 1200px;
-    margin: 3px;
-    background: rgba(0, 0, 0, 0.8); /* Dark transparent background */
-    backdrop-filter: blur(10px);
-    animation: fadeIn 1s ease-in-out;
-    overflow-y: auto;
-    max-height: 100vh;
-}
-
-.overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(15, 15, 15, 0.4);
-    z-index: -1;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.header h1 {
-    text-align: center;
-    margin: 10px 0 40px;
-    font-size: 42px;
-    color: #f39c12; /* Golden Yellow */
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 4px;
-}
-
-.nav-buttons {
-    display: flex;
-    justify-content: center;
-    gap: 10px;
-    margin: 20px 0;
-}
-
-.nav-buttons .button {
-    background-color: transparent;
-    border: 3px solid #f39c12; /* Golden Yellow */
-    color: #f39c12;
-    padding: 6px 12px;
-    font-size: 20px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: 0.3s;
-    text-transform: uppercase;
-    letter-spacing: 3px;
-}
-
-.nav-buttons .button:hover {
-    background-color: #f39c12; /* Golden Yellow */
-    color: #fff;
-    transform: scale(1.05);
-}
-
-.content {
-    display: none;
-    opacity: 0;
-    transition: opacity 0.5s ease-in-out;
-}
-
-.content.active {
-    display: block;
-    opacity: 1;
-}
-
-.config-section {
-    background: rgba(44, 62, 80, 0.7); /* Dark Slate Blue */
-    padding: 20px;
-    border: 2px solid #f39c12;
-    border-radius: 10px;
-    position: relative;
-    animation: slideIn 0.5s ease-in-out;
-}
-
-@keyframes slideIn {
-    from { transform: translateX(-30px); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
-}
-
-.config-section h3 {
-    color: #e74c3c; /* Red */
-    font-size: 28px;
-    margin-top: 0;
-}
-
-.config-section p {
-    font-size: 16px;
-    color: #ecf0f1; /* Light Gray */
-}
-
-.config-toggle {
-    margin-bottom: 10px;
-}
-
-.config-content {
-    display: none;
-}
-
-.config-content.active {
-    display: block;
-}
-
-.config-block {
-    margin-bottom: 10px;
-    padding: 15px;
-    border-radius: 10px;
-    background-color: rgba(52, 152, 219, 0.2); /* Light Blue */
-    transition: background-color 0.3s;
-}
-
-.config-block h4 {
-    color: #2980b9; /* Blue */
-    font-size: 22px;
-    font-weight: 600;
-    margin-bottom: 8px;
-}
-
-.config {
-    background-color: rgba(44, 62, 80, 0.3); /* Dark Slate Blue */
-    padding: 15px;
-    border-radius: 5px;
-    border: 2px solid #f39c12;
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 15px;
-    word-wrap: break-word;
-    white-space: pre-wrap;
-}
-
-.button {
-    background-color: transparent;
-    border: 2px solid #f39c12; /* Golden Yellow */
-    color: #f39c12;
-    padding: 4px 8px;
-    font-size: 12px;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: 0.3s;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    margin-right: 4px;
-}
-
-.button i {
-    margin-right: 3px;
-}
-
-.button:hover {
-    background-color: #f39c12; /* Golden Yellow */
-    color: #fff;
-}
-
-.config-divider {
-    height: 1px;
-    background: linear-gradient(to right, transparent, #fff, transparent);
-    margin: 20px 0;
-}
-
-.watermark {
-    position: absolute;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 0.8rem;
-    color: rgba(255, 255, 255, 0.5);
-    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
-    font-weight: bold;
-    text-align: center;
-}
-
-.watermark a {
-    color: #e74c3c; /* Red */
-    text-decoration: none;
-    font-weight: bold;
-}
-
-.watermark a:hover {
-    color: #e74c3c; /* Red */
-}
-
-@media (max-width: 768px) {
-    .header h1 { font-size: 32px; }
-    .config-section h3 { font-size: 24px; }
-    .config-block h4 { font-size: 20px; }
-}
-
-    </style>
+async function handleRootRequest(request, USERNAME, PASSWORD, enableAuth) {
+  const cache = caches.default;
+  const cacheKey = new Request(request.url);
+  if (enableAuth) {
+      if (!authenticate(request, USERNAME, PASSWORD)) {
+          return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="Admin"' } });
+      }
+  }
+  const cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) {
+      return cachedResponse;
+  }
+  const response = new Response(`
+  <!DOCTYPE html>
+  <html lang="zh-CN">
+  <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Telegraph图床-基于Workers的图床服务">
+  <meta name="keywords" content="Telegraph图床,Workers图床, Cloudflare, Workers,telegra.ph, 图床">
+  <title>Telegraph图床-基于Workers的图床服务</title>
+  <link rel="icon" href="https://p1.meituan.net/csc/c195ee91001e783f39f41ffffbbcbd484286.ico" type="image/x-icon">
+  <link href="https://lf3-cdn-tos.bytecdntp.com/cdn/expire-1-M/twitter-bootstrap/4.6.1/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://lf26-cdn-tos.bytecdntp.com/cdn/expire-1-M/bootstrap-fileinput/5.2.7/css/fileinput.min.css" rel="stylesheet" />
+  <link href="https://lf26-cdn-tos.bytecdntp.com/cdn/expire-1-M/toastr.js/2.1.4/toastr.min.css" rel="stylesheet" />
+  <link href="https://lf3-cdn-tos.bytecdntp.com/cdn/expire-1-M/font-awesome/5.15.4/css/all.min.css" type="text/css" rel="stylesheet" />
+  <style>
+      body {
+          margin: 0;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100vh;
+          position: relative;
+      }
+      .background {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background-size: cover;
+          z-index: -1;
+          transition: opacity 1s ease-in-out;
+          opacity: 1;
+      }
+      .card {
+          background-color: rgba(255, 255, 255, 0.8);
+          border: none;
+          border-radius: 10px;
+          box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+          padding: 20px;
+          width: 90%;
+          max-width: 400px;
+          text-align: center;
+          margin: 0 auto;
+          position: relative;
+      }
+      .uniform-height {
+          margin-top: 20px;
+      }
+      #viewCacheBtn {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          background: none;
+          border: none;
+          color: rgba(0, 0, 0, 0.1);
+          cursor: pointer;
+          font-size: 24px;
+          transition: color 0.3s ease;
+      }
+      #viewCacheBtn:hover {
+          color: rgba(0, 0, 0, 0.4);
+      }
+      #cacheContent {
+          margin-top: 20px;
+          max-height: 200px;
+          border-radius: 5px;
+          overflow-y: auto;
+      }
+      .cache-title {
+          text-align: left;
+          margin-bottom: 10px;
+      }
+      .cache-item {
+          display: block;
+          cursor: pointer;
+          border-radius: 4px;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+          transition: background-color 0.3s ease;
+          text-align: left;
+          padding: 10px;
+      }
+      .cache-item:hover {
+          background-color: #e9ecef;
+      }
+      .project-link {
+          font-size: 14px;
+          text-align: center;
+          margin-top: 5px;
+          margin-bottom: 0;
+      }
+      textarea.form-control {
+          max-height: 200px;
+          overflow-y: hidden;
+          resize: none;
+      }
+  </style>
 </head>
 <body>
-    <div class="overlay"></div>
-    <div class="container">
-        <div class="header">
-            <h1>VLESS CLOUDFLARE</h1>
-        </div>
-        <div class="config-section">
-        <strong>LIST WILLCARD : </strong><br>
-        <br>
-        \u2730 ava.game.naver.com<br>
-        \u2730 graph.instagram.com<br>
-        \u2730 quiz.int.vidio.com<br>
-        \u2730 live.iflix.com<br>
-        \u2730 support.zoom.us<br>
-        \u2730 blog.webex.com<br>
-        \u2730 cache.netflix.com<br>
-        \u2730 investors.spotify.com<br>
-        \u2730 zaintest.vuclip.com<br>
-        </div>
-        <hr class="config-divider" />
-        <div id="vless" class="content active">
-            ${vlessConfigs}
-        </div>
-    </div>
-    <script>
-        function showContent(contentId) {
-            const contents = document.querySelectorAll('.content');
-            contents.forEach(content => {
-                content.classList.remove('active');
-            });
-            document.getElementById(contentId).classList.add('active');
-        }
-        function salinTeks() {
-            var teks = document.getElementById('teksAsli');
-            teks.select();
-            document.execCommand('copy');
-            alert('Teks telah disalin.');
-        }
-        function copyClash(elementId) {
-            const text = document.getElementById(elementId).textContent;
-            navigator.clipboard.writeText(text)
-            .then(() => {
-            const alertBox = document.createElement('div');
-            alertBox.textContent = "Copied to clipboard!";
-            alertBox.style.position = 'fixed';
-            alertBox.style.bottom = '20px';
-            alertBox.style.right = '20px';
-            alertBox.style.backgroundColor = 'yellow';
-            alertBox.style.color = '#fff';
-            alertBox.style.padding = '10px 20px';
-            alertBox.style.borderRadius = '5px';
-            alertBox.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
-            alertBox.style.opacity = '0';
-            alertBox.style.transition = 'opacity 0.5s ease-in-out';
-            document.body.appendChild(alertBox);
-            setTimeout(() => {
-                alertBox.style.opacity = '1';
-            }, 100);
-            setTimeout(() => {
-                alertBox.style.opacity = '0';
-                setTimeout(() => {
-                    document.body.removeChild(alertBox);
-                }, 500);
-            }, 2000);
-        })
-        .catch((err) => {
-            console.error("Failed to copy to clipboard:", err);
-        });
-        }
-function fetchAndDisplayAlert(path) {
-    fetch(path)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(\`HTTP error! Status: \${response.status}\`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            const proxyStatus = data.proxyStatus || "Unknown status";
-            const alertBox = document.createElement('div');
-            alertBox.textContent = \`Proxy Status: \${proxyStatus}\`;
-            alertBox.style.position = 'fixed';
-            alertBox.style.bottom = '20px';
-            alertBox.style.right = '20px';
-            alertBox.style.backgroundColor = 'yellow';
-            alertBox.style.color = '#fff';
-            alertBox.style.padding = '10px 20px';
-            alertBox.style.borderRadius = '5px';
-            alertBox.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
-            alertBox.style.opacity = '0';
-            alertBox.style.transition = 'opacity 0.5s ease-in-out';
-            document.body.appendChild(alertBox);
-            
-            setTimeout(() => {
-                alertBox.style.opacity = '1';
-            }, 100);
-            
-            setTimeout(() => {
-                alertBox.style.opacity = '0';
-                setTimeout(() => {
-                    document.body.removeChild(alertBox);
-                }, 500);
-            }, 2000);
-        })
-        .catch((err) => {
-            alert("Failed to fetch data or invalid response.");
-        });
-}
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text)
-                .then(() => {
-                    const alertBox = document.createElement('div');
-                    alertBox.textContent = "Copied to clipboard!";
-                    alertBox.style.position = 'fixed';
-                    alertBox.style.bottom = '20px';
-                    alertBox.style.right = '20px';
-                    alertBox.style.backgroundColor = 'yellow';
-                    alertBox.style.color = '#fff';
-                    alertBox.style.padding = '10px 20px';
-                    alertBox.style.borderRadius = '5px';
-                    alertBox.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
-                    alertBox.style.opacity = '0';
-                    alertBox.style.transition = 'opacity 0.5s ease-in-out';
-                    document.body.appendChild(alertBox);
-                    setTimeout(() => {
-                        alertBox.style.opacity = '1';
-                    }, 100);
-                    setTimeout(() => {
-                        alertBox.style.opacity = '0';
-                        setTimeout(() => {
-                            document.body.removeChild(alertBox);
-                        }, 500);
-                    }, 2000);
-                })
-                .catch((err) => {
-                    console.error("Failed to copy to clipboard:", err);
-                });
-        }
-
-        function toggleConfig(button, show, hide) {
-            const configContent = button.nextElementSibling;
-            if (configContent.classList.contains('active')) {
-                configContent.classList.remove('active');
-                button.textContent = show;
-            } else {
-                configContent.classList.add('active');
-                button.textContent = hide;
-            }
-        }
-    <\/script>
-</body>
-</html>`;
-    return htmlConfigs;
-  } catch (error) {
-    return `An error occurred while generating the VLESS configurations. ${error}`;
-  }
-}
-function generateUUIDv4() {
-  const randomValues = crypto.getRandomValues(new Uint8Array(16));
-  randomValues[6] = randomValues[6] & 15 | 64;
-  randomValues[8] = randomValues[8] & 63 | 128;
-  return [
-    randomValues[0].toString(16).padStart(2, "0"),
-    randomValues[1].toString(16).padStart(2, "0"),
-    randomValues[2].toString(16).padStart(2, "0"),
-    randomValues[3].toString(16).padStart(2, "0"),
-    randomValues[4].toString(16).padStart(2, "0"),
-    randomValues[5].toString(16).padStart(2, "0"),
-    randomValues[6].toString(16).padStart(2, "0"),
-    randomValues[7].toString(16).padStart(2, "0"),
-    randomValues[8].toString(16).padStart(2, "0"),
-    randomValues[9].toString(16).padStart(2, "0"),
-    randomValues[10].toString(16).padStart(2, "0"),
-    randomValues[11].toString(16).padStart(2, "0"),
-    randomValues[12].toString(16).padStart(2, "0"),
-    randomValues[13].toString(16).padStart(2, "0"),
-    randomValues[14].toString(16).padStart(2, "0"),
-    randomValues[15].toString(16).padStart(2, "0")
-  ].join("").replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
-}
-async function vlessOverWSHandler(request) {
-  const webSocketPair = new WebSocketPair();
-  const [client, webSocket] = Object.values(webSocketPair);
-  webSocket.accept();
-  let address = "";
-  let portWithRandomLog = "";
-  const log = (info, event) => {
-    console.log(`[${address}:${portWithRandomLog}] ${info}`, event || "");
-  };
-  const earlyDataHeader = request.headers.get("sec-websocket-protocol") || "";
-  const readableWebSocketStream = makeReadableWebSocketStream(webSocket, earlyDataHeader, log);
-  let remoteSocketWapper = {
-    value: null
-  };
-  let udpStreamWrite = null;
-  let isDns = false;
-  readableWebSocketStream.pipeTo(new WritableStream({
-    async write(chunk, controller) {
-      if (isDns && udpStreamWrite) {
-        return udpStreamWrite(chunk);
-      }
-      if (remoteSocketWapper.value) {
-        const writer = remoteSocketWapper.value.writable.getWriter();
-        await writer.write(chunk);
-        writer.releaseLock();
-        return;
-      }
-      const {
-        hasError,
-        message,
-        portRemote = 443,
-        addressRemote = "",
-        rawDataIndex,
-        vlessVersion = new Uint8Array([0, 0]),
-        isUDP
-      } = processVlessHeader(chunk);
-      address = addressRemote;
-      portWithRandomLog = `${portRemote}--${Math.random()} ${isUDP ? "udp " : "tcp "} `;
-      if (hasError) {
-        throw new Error(message);
-        return;
-      }
-      if (isUDP) {
-        if (portRemote === 53) {
-          isDns = true;
-        } else {
-          throw new Error("UDP proxy only enable for DNS which is port 53");
-          return;
-        }
-      }
-      const vlessResponseHeader = new Uint8Array([vlessVersion[0], 0]);
-      const rawClientData = chunk.slice(rawDataIndex);
-      if (isDns) {
-        const { write } = await handleUDPOutBound(webSocket, vlessResponseHeader, log);
-        udpStreamWrite = write;
-        udpStreamWrite(rawClientData);
-        return;
-      }
-      handleTCPOutBound(remoteSocketWapper, addressRemote, portRemote, rawClientData, webSocket, vlessResponseHeader, log);
-    },
-    close() {
-      log(`readableWebSocketStream is close`);
-    },
-    abort(reason) {
-      log(`readableWebSocketStream is abort`, JSON.stringify(reason));
-    }
-  })).catch((err) => {
-    log("readableWebSocketStream pipeTo error", err);
-  });
-  return new Response(null, {
-    status: 101,
-    webSocket: client
-  });
-}
-async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawClientData, webSocket, vlessResponseHeader, log) {
-  async function connectAndWrite(address, port) {
-    const tcpSocket2 = connect({
-      hostname: address,
-      port
-    });
-    remoteSocket.value = tcpSocket2;
-    log(`connected to ${address}:${port}`);
-    const writer = tcpSocket2.writable.getWriter();
-    await writer.write(rawClientData);
-    writer.releaseLock();
-    return tcpSocket2;
-  }
-  async function retry() {
-    const tcpSocket2 = await connectAndWrite(proxyIP || addressRemote, proxyPort || portRemote);
-    tcpSocket2.closed.catch((error) => {
-      console.log("retry tcpSocket closed error", error);
-    }).finally(() => {
-      safeCloseWebSocket(webSocket);
-    });
-    remoteSocketToWS(tcpSocket2, webSocket, vlessResponseHeader, null, log);
-  }
-  const tcpSocket = await connectAndWrite(addressRemote, portRemote);
-  remoteSocketToWS(tcpSocket, webSocket, vlessResponseHeader, retry, log);
-}
-function makeReadableWebSocketStream(webSocketServer, earlyDataHeader, log) {
-  let readableStreamCancel = false;
-  const stream = new ReadableStream({
-    start(controller) {
-      webSocketServer.addEventListener("message", (event) => {
-        if (readableStreamCancel) {
-          return;
-        }
-        const message = event.data;
-        controller.enqueue(message);
-      });
-      webSocketServer.addEventListener(
-        "close",
-        () => {
-          safeCloseWebSocket(webSocketServer);
-          if (readableStreamCancel) {
-            return;
+  <div class="background" id="background"></div>
+  <div class="card">
+      <div class="title">Telegraph图床</div>
+      <button type="button" class="btn" id="viewCacheBtn" title="查看历史记录"><i class="fas fa-clock"></i></button>
+      <div class="card-body">
+          <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+              <div class="file-input-container">
+                  <input id="fileInput" name="file" type="file" class="form-control-file" data-browse-on-zone-click="true" multiple>
+              </div>
+              <div class="form-group mb-3 uniform-height" style="display: none;">
+                  <button type="button" class="btn btn-light mr-2" id="urlBtn">URL</button>
+                  <button type="button" class="btn btn-light mr-2" id="bbcodeBtn">BBCode</button>
+                  <button type="button" class="btn btn-light" id="markdownBtn">Markdown</button>
+              </div>
+              <div class="form-group mb-3 uniform-height" style="display: none;">
+                  <textarea class="form-control" id="fileLink" readonly></textarea>
+              </div>
+              <div id="cacheContent" style="display: none;"></div>
+          </form>
+      </div>
+      <p class="project-link">项目开源于 GitHub - <a href="https://github.com/0-RTT/telegraph" target="_blank" rel="noopener noreferrer">0-RTT/telegraph</a></p>
+      <script src="https://lf3-cdn-tos.bytecdntp.com/cdn/expire-1-M/jquery/3.6.0/jquery.min.js" type="application/javascript"></script>
+      <script src="https://lf26-cdn-tos.bytecdntp.com/cdn/expire-1-M/bootstrap-fileinput/5.2.7/js/fileinput.min.js" type="application/javascript"></script>
+      <script src="https://lf26-cdn-tos.bytecdntp.com/cdn/expire-1-M/bootstrap-fileinput/5.2.7/js/locales/zh.min.js" type="application/javascript"></script>
+      <script src="https://lf9-cdn-tos.bytecdntp.com/cdn/expire-1-M/toastr.js/2.1.4/toastr.min.js" type="application/javascript"></script>
+      <script>
+          async function fetchBingImages() {
+              const response = await fetch('/bing-images');
+              const data = await response.json();
+              return data.data.map(image => image.url);
           }
-          controller.close();
-        }
-      );
-      webSocketServer.addEventListener(
-        "error",
-        (err) => {
-          log("webSocketServer has error");
-          controller.error(err);
-        }
-      );
-      const { earlyData, error } = base64ToArrayBuffer(earlyDataHeader);
-      if (error) {
-        controller.error(error);
-      } else if (earlyData) {
-        controller.enqueue(earlyData);
-      }
-    },
-    pull(controller) {
-    },
-    cancel(reason) {
-      if (readableStreamCancel) {
-        return;
-      }
-      log(`ReadableStream was canceled, due to ${reason}`);
-      readableStreamCancel = true;
-      safeCloseWebSocket(webSocketServer);
+
+          async function setBackgroundImages() {
+              const images = await fetchBingImages();
+              const backgroundDiv = document.getElementById('background');
+              if (images.length > 0) {
+                  backgroundDiv.style.backgroundImage = 'url(' + images[0] + ')';
+              }
+              let index = 0;
+              let currentBackgroundDiv = backgroundDiv;
+              setInterval(() => {
+                  const nextIndex = (index + 1) % images.length;
+                  const nextBackgroundDiv = document.createElement('div');
+                  nextBackgroundDiv.className = 'background next';
+                  nextBackgroundDiv.style.backgroundImage = 'url(' + images[nextIndex] + ')';
+                  document.body.appendChild(nextBackgroundDiv);
+                  nextBackgroundDiv.style.opacity = 0;
+                  setTimeout(() => {
+                      nextBackgroundDiv.style.opacity = 1;
+                  }, 50);
+                  setTimeout(() => {
+                      document.body.removeChild(currentBackgroundDiv);
+                      currentBackgroundDiv = nextBackgroundDiv;
+                      index = nextIndex;
+                  }, 1000);
+              }, 5000);
+          }
+
+          $(document).ready(function() {
+              let originalImageURLs = [];
+              let isCacheVisible = false;
+              initFileInput();
+              setBackgroundImages();
+
+              function initFileInput() {
+                  $("#fileInput").fileinput({
+                      theme: 'fa',
+                      language: 'zh',
+                      browseClass: "btn btn-primary",
+                      removeClass: "btn btn-danger",
+                      showUpload: false,
+                      showPreview: false,
+                  }).on('filebatchselected', handleFileSelection)
+                    .on('fileclear', handleFileClear);
+              }
+
+              async function handleFileSelection() {
+                  const files = $('#fileInput')[0].files;
+                  for (let i = 0; i < files.length; i++) {
+                      await uploadFile(files[i]);
+                  }
+              }
+
+              async function uploadFile(file) {
+                  try {
+                      toastr.info('上传中...', '', { timeOut: 0 });
+                      const interfaceInfo = {
+                          acceptTypes: 'image/*,video/*',
+                          maxFileSize: 20 * 1024 * 1024
+                      };
+                      const acceptedTypes = interfaceInfo.acceptTypes.split(',');
+                      const isAcceptedType = acceptedTypes.some(type => {
+                          return type.includes('*') ? file.type.startsWith(type.split('/')[0]) : file.type === type;
+                      });
+                      if (!isAcceptedType) {
+                          toastr.error('仅支持图片或视频格式的文件。');
+                          return;
+                      }
+                      if (file.size > interfaceInfo.maxFileSize) {
+                          if (file.type.startsWith('video/') || file.type === 'image/gif') {
+                              toastr.error('文件必须≤20MB');
+                              return;
+                          } else {
+                              toastr.info('正在压缩...', '', { timeOut: 0 });
+                              const compressedFile = await compressImage(file);
+                              file = compressedFile;
+                          }
+                      }
+                      const formData = new FormData($('#uploadForm')[0]);
+                      formData.set('file', file, file.name);
+                      const uploadResponse = await fetch('/upload', { method: 'POST', body: formData });
+                      const responseData = await handleUploadResponse(uploadResponse);
+                      if (responseData.error) {
+                          toastr.error(responseData.error);
+                      } else {
+                          originalImageURLs.push(responseData.data);
+                          $('#fileLink').val(originalImageURLs.join('\\n\\n'));
+                          $('.form-group').show();
+                          adjustTextareaHeight($('#fileLink')[0]);
+                          toastr.success('文件上传成功！');
+                          saveToLocalCache(responseData.data, file.name);
+                      }
+                  } catch (error) {
+                      console.error('处理文件时出现错误:', error);
+                      $('#fileLink').val('文件处理失败！');
+                      toastr.error('文件处理失败！');
+                  } finally {
+                      toastr.clear();
+                  }
+              }
+
+              async function handleUploadResponse(response) {
+                  if (response.ok) {
+                      return await response.json();
+                  } else {
+                      const errorData = await response.json();
+                      return { error: errorData.error };
+                  }
+              }
+
+              $(document).on('paste', function(event) {
+                  const clipboardData = event.originalEvent.clipboardData;
+                  if (clipboardData && clipboardData.items) {
+                      for (let i = 0; i < clipboardData.items.length; i++) {
+                          const item = clipboardData.items[i];
+                          if (item.kind === 'file') {
+                              const pasteFile = item.getAsFile();
+                              uploadFile(pasteFile);
+                              break;
+                          }
+                      }
+                  }
+              });
+
+              async function compressImage(file, quality = 0.5, maxResolution = 20000000) {
+                  return new Promise((resolve) => {
+                      const image = new Image();
+                      image.onload = () => {
+                          const width = image.width;
+                          const height = image.height;
+                          const resolution = width * height;
+                          let scale = 1;
+                          if (resolution > maxResolution) {
+                              scale = Math.sqrt(maxResolution / resolution);
+                          }
+                          const targetWidth = Math.round(width * scale);
+                          const targetHeight = Math.round(height * scale);
+                          const canvas = document.createElement('canvas');
+                          const ctx = canvas.getContext('2d');
+                          canvas.width = targetWidth;
+                          canvas.height = targetHeight;
+                          ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
+                          canvas.toBlob((blob) => {
+                              const compressedFile = new File([blob], file.name, { type: 'image/jpeg' });
+                              toastr.success('图片压缩成功！');
+                              resolve(compressedFile);
+                          }, 'image/jpeg', quality);
+                      };
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                          image.src = event.target.result;
+                      };
+                      reader.readAsDataURL(file);
+                  });
+              }
+
+              $('#urlBtn, #bbcodeBtn, #markdownBtn').on('click', function() {
+                  const fileLinks = originalImageURLs.map(url => url.trim()).filter(url => url !== '');
+                  if (fileLinks.length > 0) {
+                      let formattedLinks = '';
+                      switch ($(this).attr('id')) {
+                          case 'urlBtn':
+                              formattedLinks = fileLinks.join('\\n\\n');
+                              break;
+                          case 'bbcodeBtn':
+                              formattedLinks = fileLinks.map(url => '[img]' + url + '[/img]').join('\\n\\n');
+                              break;
+                          case 'markdownBtn':
+                              formattedLinks = fileLinks.map(url => '![image](' + url + ')').join('\\n\\n');
+                              break;
+                          default:
+                              formattedLinks = fileLinks.join('\\n');
+                      }
+                      $('#fileLink').val(formattedLinks);
+                      adjustTextareaHeight($('#fileLink')[0]);
+                      copyToClipboardWithToastr(formattedLinks);
+                  }
+              });
+
+              function handleFileClear(event) {
+                  $('#fileLink').val('');
+                  adjustTextareaHeight($('#fileLink')[0]);
+                  hideButtonsAndTextarea();
+                  originalImageURLs = [];
+              }
+
+              function adjustTextareaHeight(textarea) {
+                textarea.style.height = '1px';
+                textarea.style.height = (textarea.scrollHeight > 200 ? 200 : textarea.scrollHeight) + 'px';
+                
+                if (textarea.scrollHeight > 200) {
+                    textarea.style.overflowY = 'auto';
+                } else {
+                    textarea.style.overflowY = 'hidden';
+                }
+            }            
+
+              function copyToClipboardWithToastr(text) {
+                  const input = document.createElement('textarea');
+                  input.value = text;
+                  document.body.appendChild(input);
+                  input.select();
+                  document.execCommand('copy');
+                  document.body.removeChild(input);
+                  toastr.success('已复制到剪贴板', '', { timeOut: 300 });
+              }
+
+              function hideButtonsAndTextarea() {
+                  $('#urlBtn, #bbcodeBtn, #markdownBtn, #fileLink').parent('.form-group').hide();
+              }
+
+              function saveToLocalCache(url, fileName) {
+                  const timestamp = new Date().toLocaleString('zh-CN', { hour12: false });
+                  const cacheData = JSON.parse(localStorage.getItem('uploadCache')) || [];
+                  cacheData.push({ url, fileName, timestamp });
+                  localStorage.setItem('uploadCache', JSON.stringify(cacheData));
+              }
+
+              $('#viewCacheBtn').on('click', function() {
+                  const cacheData = JSON.parse(localStorage.getItem('uploadCache')) || [];
+                  const cacheContent = $('#cacheContent');
+                  cacheContent.empty();
+                  if (isCacheVisible) {
+                      cacheContent.hide();
+                      $('#fileLink').val('');
+                      $('#fileLink').parent('.form-group').hide();
+                      isCacheVisible = false;
+                  } else {
+                      if (cacheData.length > 0) {
+                          cacheData.reverse();
+                          cacheData.forEach((item) => {
+                              const listItem = $('<div class="cache-item"></div>')
+                                  .text(item.timestamp + ' - ' + item.fileName)
+                                  .data('url', item.url);
+                              cacheContent.append(listItem);
+                              cacheContent.append('<br>');
+                          });
+                          cacheContent.show();
+                      } else {
+                          cacheContent.append('<div>还没有记录哦！</div>').show();
+                      }
+                      isCacheVisible = true;
+                  }
+              });
+
+              $(document).on('click', '.cache-item', function() {
+                  const url = $(this).data('url');
+                  originalImageURLs = [];
+                  $('#fileLink').val('');
+                  originalImageURLs.push(url);
+                  $('#fileLink').val(originalImageURLs.map(url => url.trim()).join('\\n\\n'));
+                  $('.form-group').show();
+                  adjustTextareaHeight($('#fileLink')[0]);
+              });
+          });
+      </script>
+</body>
+</html>  
+`, { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
+  await cache.put(cacheKey, response.clone());
+  return response;
+}
+
+async function handleAdminRequest(DATABASE, request, USERNAME, PASSWORD) {
+  if (!authenticate(request, USERNAME, PASSWORD)) {
+    return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="Admin"' } });
+  }
+  return await generateAdminPage(DATABASE);
+}
+
+function isValidCredentials(authHeader, USERNAME, PASSWORD) {
+  const base64Credentials = authHeader.split(' ')[1];
+  const credentials = atob(base64Credentials).split(':');
+  const username = credentials[0];
+  const password = credentials[1];
+  return username === USERNAME && password === PASSWORD;
+}
+
+async function generateAdminPage(DATABASE) {
+  const mediaData = await fetchMediaData(DATABASE);
+  const mediaHtml = mediaData.map(({ url }) => {
+    const fileExtension = url.split('.').pop().toLowerCase();
+    const timestamp = url.split('/').pop().split('.')[0];
+    if (fileExtension === 'mp4') {
+      return `
+      <div class="media-container" data-key="${url}" onclick="toggleImageSelection(this)">
+        <div class="media-type">视频</div>
+        <video class="gallery-video" style="width: 100%; height: 100%; object-fit: contain;" data-src="${url}" controls>
+          <source src="${url}" type="video/mp4">
+          您的浏览器不支持视频标签。
+        </video>
+        <div class="upload-time">上传时间: ${new Date(parseInt(timestamp)).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</div>
+      </div>
+      `;
+    } else {
+      return `
+      <div class="image-container" data-key="${url}" onclick="toggleImageSelection(this)">
+        <img data-src="${url}" alt="Image" class="gallery-image lazy">
+        <div class="upload-time">上传时间: ${new Date(parseInt(timestamp)).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</div>
+      </div>
+      `;
     }
-  });
-  return stream;
-}
-function processVlessHeader(vlessBuffer) {
-  if (vlessBuffer.byteLength < 24) {
-    return {
-      hasError: true,
-      message: "invalid data"
-    };
-  }
-  const version = new Uint8Array(vlessBuffer.slice(0, 1));
-  let isValidUser = true;
-  let isUDP = false;
-  if (!isValidUser) {
-    return {
-      hasError: true,
-      message: "invalid user"
-    };
-  }
-  const optLength = new Uint8Array(vlessBuffer.slice(17, 18))[0];
-  const command = new Uint8Array(
-    vlessBuffer.slice(18 + optLength, 18 + optLength + 1)
-  )[0];
-  if (command === 1) {
-  } else if (command === 2) {
-    isUDP = true;
-  } else {
-    return {
-      hasError: true,
-      message: `command ${command} is not support, command 01-tcp,02-udp,03-mux`
-    };
-  }
-  const portIndex = 18 + optLength + 1;
-  const portBuffer = vlessBuffer.slice(portIndex, portIndex + 2);
-  const portRemote = new DataView(portBuffer).getUint16(0);
-  let addressIndex = portIndex + 2;
-  const addressBuffer = new Uint8Array(
-    vlessBuffer.slice(addressIndex, addressIndex + 1)
-  );
-  const addressType = addressBuffer[0];
-  let addressLength = 0;
-  let addressValueIndex = addressIndex + 1;
-  let addressValue = "";
-  switch (addressType) {
-    case 1:
-      addressLength = 4;
-      addressValue = new Uint8Array(
-        vlessBuffer.slice(addressValueIndex, addressValueIndex + addressLength)
-      ).join(".");
-      break;
-    case 2:
-      addressLength = new Uint8Array(
-        vlessBuffer.slice(addressValueIndex, addressValueIndex + 1)
-      )[0];
-      addressValueIndex += 1;
-      addressValue = new TextDecoder().decode(
-        vlessBuffer.slice(addressValueIndex, addressValueIndex + addressLength)
-      );
-      break;
-    case 3:
-      addressLength = 16;
-      const dataView = new DataView(
-        vlessBuffer.slice(addressValueIndex, addressValueIndex + addressLength)
-      );
-      const ipv6 = [];
-      for (let i = 0; i < 8; i++) {
-        ipv6.push(dataView.getUint16(i * 2).toString(16));
+  }).join('');
+  
+  const html = `
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <title>图库</title>
+      <link rel="icon" href="https://p1.meituan.net/csc/c195ee91001e783f39f41ffffbbcbd484286.ico" type="image/x-icon">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #f4f4f4;
+        margin: 0;
+        padding: 20px;
       }
-      addressValue = ipv6.join(":");
-      break;
-    default:
-      return {
-        hasError: true,
-        message: `invild  addressType is ${addressType}`
-      };
-  }
-  if (!addressValue) {
-    return {
-      hasError: true,
-      message: `addressValue is empty, addressType is ${addressType}`
-    };
-  }
-  return {
-    hasError: false,
-    addressRemote: addressValue,
-    addressType,
-    portRemote,
-    rawDataIndex: addressValueIndex + addressLength,
-    vlessVersion: version,
-    isUDP
-  };
-}
-async function remoteSocketToWS(remoteSocket, webSocket, vlessResponseHeader, retry, log) {
-  let remoteChunkCount = 0;
-  let chunks = [];
-  let vlessHeader = vlessResponseHeader;
-  let hasIncomingData = false;
-  await remoteSocket.readable.pipeTo(
-    new WritableStream({
-      start() {
-      },
-      async write(chunk, controller) {
-        hasIncomingData = true;
-        if (webSocket.readyState !== WS_READY_STATE_OPEN) {
-          controller.error(
-            "webSocket.readyState is not open, maybe close"
-          );
-        }
-        if (vlessHeader) {
-          webSocket.send(await new Blob([vlessHeader, chunk]).arrayBuffer());
-          vlessHeader = null;
-        } else {
-          webSocket.send(chunk);
-        }
-      },
-      close() {
-        log(`remoteConnection!.readable is close with hasIncomingData is ${hasIncomingData}`);
-      },
-      abort(reason) {
-        console.error(`remoteConnection!.readable abort`, reason);
+      .header {
+        position: sticky;
+        top: 0;
+        background-color: #ffffff;
+        z-index: 1000;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding: 15px 20px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border-radius: 8px;
       }
-    })
-  ).catch((error) => {
-    console.error(
-      `remoteSocketToWS has exception `,
-      error.stack || error
-    );
-    safeCloseWebSocket(webSocket);
+      .gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 16px;
+      }
+      .image-container, .media-container {
+        position: relative;
+        overflow: hidden;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        aspect-ratio: 1 / 1;
+        transition: transform 0.3s, box-shadow 0.3s;
+      }
+      .media-type {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 5px;
+        border-radius: 5px;
+        font-size: 14px;
+        z-index: 10;
+        cursor: pointer;
+      }
+      .image-container .upload-time, .media-container .upload-time {
+        position: absolute;
+        bottom: 10px;
+        left: 10px;
+        background-color: rgba(255, 255, 255, 0.7);
+        padding: 5px;
+        border-radius: 5px;
+        color: #000;
+        font-size: 14px;
+        z-index: 10;
+        display: none;
+      }
+      .image-container:hover, .media-container:hover {
+        transform: scale(1.05);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+      }
+      .gallery-image {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        transition: opacity 0.3s;
+        opacity: 0;
+      }
+      .gallery-image.loaded {
+        opacity: 1;
+      }
+      .media-container.selected, .image-container.selected {
+        border: 2px solid #007bff;
+        background-color: rgba(0, 123, 255, 0.1);
+      }
+      .footer {
+        margin-top: 20px;
+        text-align: center;
+        font-size: 18px;
+        color: #555;
+      }
+      .delete-button {
+        background-color: #ff4d4d;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        padding: 10px 15px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+        width: auto;
+      }
+      .delete-button:hover {
+        background-color: #ff1a1a;
+      }
+      .hidden {
+        display: none;
+      }
+      @media (max-width: 600px) {
+        .gallery {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .header {
+          flex-direction: row;
+          align-items: center;
+        }
+        .header-right {
+          margin-left: auto;
+        }
+        .footer {
+          font-size: 16px;
+        }
+        .delete-button {
+          width: 100%;
+          margin-top: 10px;
+        }
+      }
+      </style>
+      <script>
+        let selectedCount = 0;
+        const selectedKeys = new Set();
+        function toggleImageSelection(container) {
+          const key = container.getAttribute('data-key');
+          container.classList.toggle('selected');
+          const uploadTime = container.querySelector('.upload-time');
+          if (container.classList.contains('selected')) {
+            selectedKeys.add(key);
+            selectedCount++;
+            uploadTime.style.display = 'block';
+          } else {
+            selectedKeys.delete(key);
+            selectedCount--;
+            uploadTime.style.display = 'none';
+          }
+          updateDeleteButton();
+        }
+        function updateDeleteButton() {
+          const deleteButton = document.getElementById('delete-button');
+          const countDisplay = document.getElementById('selected-count');
+          countDisplay.textContent = selectedCount;
+          const headerRight = document.querySelector('.header-right');
+          if (selectedCount > 0) {
+            headerRight.classList.remove('hidden');
+          } else {
+            headerRight.classList.add('hidden');
+          }
+        }
+        async function deleteSelectedImages() {
+          if (selectedKeys.size === 0) return;
+          const response = await fetch('/delete-images', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(Array.from(selectedKeys))
+          });
+          if (response.ok) {
+            alert('选中的媒体已删除');
+            location.reload();
+          } else {
+            alert('删除失败');
+          }
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+          const images = document.querySelectorAll('.gallery-image[data-src]');
+          const options = {
+            root: null,
+            rootMargin: '0px',
+            threshold: 0.1
+          };
+          const imageObserver = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+              if (entry.isIntersecting) {
+                const img = entry.target;
+                img.src = img.dataset.src;
+                img.onload = () => img.classList.add('loaded');
+                observer.unobserve(img);
+              }
+            });
+          }, options);
+          images.forEach(image => {
+            imageObserver.observe(image);
+          });
+        });
+      </script>
+    </head>
+    <body>
+      <div class="header">
+        <div class="header-left">
+          <span>媒体文件 ${mediaData.length} 个</span>
+          <span>已选中: <span id="selected-count">0</span>个</span>
+        </div>
+        <div class="header-right hidden">          
+          <button id="delete-button" class="delete-button" onclick="deleteSelectedImages()">删除选中</button>
+        </div>
+      </div>
+      <div class="gallery">
+        ${mediaHtml}
+      </div>
+      <div class="footer">
+        到底啦
+      </div>
+    </body>
+  </html>
+  `;
+  return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+
+async function fetchMediaData(DATABASE) {
+  const result = await DATABASE.prepare('SELECT url, fileId FROM media').all();
+  const mediaData = result.results.map(row => {
+    const timestamp = parseInt(row.url.split('/').pop().split('.')[0]);
+    return { fileId: row.fileId, url: row.url, timestamp: timestamp };
   });
-  if (hasIncomingData === false && retry) {
-    log(`retry`);
-    retry();
+  mediaData.sort((a, b) => b.timestamp - a.timestamp);
+  return mediaData.map(({ fileId, url }) => ({ fileId, url }));
+}
+
+async function handleUploadRequest(request, DATABASE, enableAuth, USERNAME, PASSWORD, domain, TG_BOT_TOKEN, TG_CHAT_ID) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file');
+    if (!file) throw new Error('缺少文件');
+    if (enableAuth && !authenticate(request, USERNAME, PASSWORD)) {
+      return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="Admin"' } });
+    }
+    const uploadFormData = new FormData();
+    uploadFormData.append("chat_id", TG_CHAT_ID);
+    let fileId;
+    if (file.type.startsWith('image/gif')) {
+      const newFileName = file.name.replace(/\.gif$/, '.jpeg');
+      const newFile = new File([file], newFileName, { type: 'image/jpeg' });
+      uploadFormData.append("document", newFile);
+    } else {
+      uploadFormData.append("document", file);
+    }
+    const telegramResponse = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument`, { method: 'POST', body: uploadFormData });
+    if (!telegramResponse.ok) {
+      const errorData = await telegramResponse.json();
+      throw new Error(errorData.description || '上传到 Telegram 失败');
+    }
+    const responseData = await telegramResponse.json();
+    if (responseData.result.video) fileId = responseData.result.video.file_id;
+    else if (responseData.result.document) fileId = responseData.result.document.file_id;
+    else if (responseData.result.sticker) fileId = responseData.result.sticker.file_id;
+    else throw new Error('返回的数据中没有文件 ID');
+    const fileExtension = file.name.split('.').pop();
+    const timestamp = Date.now();
+    const imageURL = `https://${domain}/${timestamp}.${fileExtension}`;
+    await DATABASE.prepare('INSERT INTO media (url, fileId) VALUES (?, ?) ON CONFLICT(url) DO NOTHING').bind(imageURL, fileId).run();
+    return new Response(JSON.stringify({ data: imageURL }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  } catch (error) {
+    console.error('内部服务器错误:', error);
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
-function base64ToArrayBuffer(base64Str) {
-  if (!base64Str) {
-    return { error: null };
+
+async function handleImageRequest(request, DATABASE, TG_BOT_TOKEN) {
+  const requestedUrl = request.url;
+  const cache = caches.default;
+  const cacheKey = new Request(requestedUrl);
+  const cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) return cachedResponse;
+  const result = await DATABASE.prepare('SELECT fileId FROM media WHERE url = ?').bind(requestedUrl).first();
+  if (!result) {
+    const notFoundResponse = new Response('资源不存在', { status: 404 });
+    await cache.put(cacheKey, notFoundResponse.clone());
+    return notFoundResponse;
+  }
+  const fileId = result.fileId;
+  let filePath;
+  let attempts = 0;
+  const maxAttempts = 3;
+  while (attempts < maxAttempts) {
+    const getFilePath = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/getFile?file_id=${fileId}`);
+    if (!getFilePath.ok) {
+      return new Response('getFile请求失败', { status: 500 });
+    }
+    const fileData = await getFilePath.json();
+    if (fileData.ok && fileData.result.file_path) {
+      filePath = fileData.result.file_path;
+      break;
+    }
+    attempts++;
+  }
+  if (!filePath) {
+    const notFoundResponse = new Response('未找到FilePath', { status: 404 });
+    await cache.put(cacheKey, notFoundResponse.clone());
+    return notFoundResponse;
+  }
+  const getFileResponse = `https://api.telegram.org/file/bot${TG_BOT_TOKEN}/${filePath}`;
+  const response = await fetch(getFileResponse);
+  if (!response.ok) {
+    return new Response('获取文件内容失败', { status: 500 });
+  }
+  const fileExtension = requestedUrl.split('.').pop().toLowerCase();
+  let contentType = 'text/plain';
+  if (fileExtension === 'jpg' || fileExtension === 'jpeg') contentType = 'image/jpeg';
+  if (fileExtension === 'png') contentType = 'image/png';
+  if (fileExtension === 'gif') contentType = 'image/gif';
+  if (fileExtension === 'webp') contentType = 'image/webp';
+  if (fileExtension === 'mp4') contentType = 'video/mp4';
+  const headers = new Headers(response.headers);
+  headers.set('Content-Type', contentType);
+  headers.set('Content-Disposition', 'inline');
+  const responseToCache = new Response(response.body, { status: response.status, headers });
+  await cache.put(cacheKey, responseToCache.clone());
+  return responseToCache;
+}
+
+async function handleBingImagesRequest(request) {
+  const cache = caches.default;
+  const cacheKey = new Request('https://cn.bing.com/HPImageArchive.aspx?format=js&idx=0&n=5');
+  const cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) return cachedResponse;
+  const res = await fetch(cacheKey);
+  if (!res.ok) {
+    return new Response('请求 Bing API 失败', { status: res.status });
+  }
+  const bingData = await res.json();
+  const images = bingData.images.map(image => ({ url: `https://cn.bing.com${image.url}` }));
+  const returnData = { status: true, message: "操作成功", data: images };
+  const response = new Response(JSON.stringify(returnData), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  await cache.put(cacheKey, response.clone());
+  return response;
+}
+
+async function handleDeleteImagesRequest(request, DATABASE) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
   }
   try {
-    base64Str = base64Str.replace(/-/g, "+").replace(/_/g, "/");
-    const decode = atob(base64Str);
-    const arryBuffer = Uint8Array.from(decode, (c) => c.charCodeAt(0));
-    return { earlyData: arryBuffer.buffer, error: null };
-  } catch (error) {
-    return { error };
-  }
-}
-var WS_READY_STATE_OPEN = 1;
-var WS_READY_STATE_CLOSING = 2;
-function safeCloseWebSocket(socket) {
-  try {
-    if (socket.readyState === WS_READY_STATE_OPEN || socket.readyState === WS_READY_STATE_CLOSING) {
-      socket.close();
+    const keysToDelete = await request.json();
+    if (!Array.isArray(keysToDelete) || keysToDelete.length === 0) {
+      return new Response(JSON.stringify({ message: '没有要删除的项' }), { status: 400 });
     }
-  } catch (error) {
-    console.error("safeCloseWebSocket error", error);
-  }
-}
-async function handleUDPOutBound(webSocket, vlessResponseHeader, log) {
-  let isVlessHeaderSent = false;
-  const transformStream = new TransformStream({
-    start(controller) {
-    },
-    transform(chunk, controller) {
-      for (let index = 0; index < chunk.byteLength; ) {
-        const lengthBuffer = chunk.slice(index, index + 2);
-        const udpPakcetLength = new DataView(lengthBuffer).getUint16(0);
-        const udpData = new Uint8Array(
-          chunk.slice(index + 2, index + 2 + udpPakcetLength)
-        );
-        index = index + 2 + udpPakcetLength;
-        controller.enqueue(udpData);
-      }
-    },
-    flush(controller) {
+    const placeholders = keysToDelete.map(() => '?').join(',');
+    const result = await DATABASE.prepare(`DELETE FROM media WHERE url IN (${placeholders})`).bind(...keysToDelete).run();
+    if (result.changes === 0) {
+      return new Response(JSON.stringify({ message: '未找到要删除的项' }), { status: 404 });
     }
-  });
-  transformStream.readable.pipeTo(new WritableStream({
-    async write(chunk) {
-      const resp = await fetch(
-        "https://1.1.1.1/dns-query",
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/dns-message"
-          },
-          body: chunk
-        }
-      );
-      const dnsQueryResult = await resp.arrayBuffer();
-      const udpSize = dnsQueryResult.byteLength;
-      const udpSizeBuffer = new Uint8Array([udpSize >> 8 & 255, udpSize & 255]);
-      if (webSocket.readyState === WS_READY_STATE_OPEN) {
-        log(`doh success and dns message length is ${udpSize}`);
-        if (isVlessHeaderSent) {
-          webSocket.send(await new Blob([udpSizeBuffer, dnsQueryResult]).arrayBuffer());
-        } else {
-          webSocket.send(await new Blob([vlessResponseHeader, udpSizeBuffer, dnsQueryResult]).arrayBuffer());
-          isVlessHeaderSent = true;
-        }
+    const cache = caches.default;
+    for (const url of keysToDelete) {
+      const cacheKey = new Request(url);
+      const cachedResponse = await cache.match(cacheKey);
+      if (cachedResponse) {
+        await cache.delete(cacheKey);
       }
     }
-  })).catch((error) => {
-    log("dns udp has error" + error);
-  });
-  const writer = transformStream.writable.getWriter();
-  return {
-    write(chunk) {
-      writer.write(chunk);
-    }
-  };
+    return new Response(JSON.stringify({ message: '删除成功' }), { status: 200 });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '删除失败', details: error.message }), { status: 500 });
+  }
 }
-export {
-  worker_default as default
-};
-//# sourceMappingURL=worker.js.map
