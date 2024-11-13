@@ -684,4 +684,4 @@ function safeCloseWebSocket2(socket) {
   } catch (error) {
     console.error("safeCloseWebSocket2 error", error);
   }
-  }
+				}
