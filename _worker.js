@@ -13,17 +13,16 @@ export default {
       if (!upgradeHeader || upgradeHeader !== 'websocket') {
         return fetch(request);
       } else {
-    	if (url.pathname.includes('/vl=')) {
-		proxyIP = url.pathname.split('=')[1].split(':')[0];
-        proxyPort = url.pathname.includes(':') ? url.pathname.split(':')[1] : '443';
-		return await vlessOverWSHandler(request);
-	  } else if (url.pathname.includes('/tr=')) {
-		proxyIP = url.pathname.split('=')[1].split(':')[0];
-        proxyPort = url.pathname.includes(':') ? url.pathname.split(':')[1] : '443';
-		return await trojanOverWSHandler(request);
-	  } else {
-	    return await vlessOverWSHandler(request);
-	   }
+        if (url.pathname.includes('/vl=')) {
+          proxyIP = url.pathname.split('vl=')[1];
+          return await vlessOverWSHandler(request);
+        } else if (url.pathname.includes('/tr=')) {
+          proxyIP = url.pathname.split('tr=')[1];
+          return await trojanOverWSHandler(request);
+        } else {
+          proxyIP = 'cdn.xn--b6gac.eu.org';
+          return await vlessOverWSHandler(request);
+        }
 	 }
     } catch (err) {
       return new Response(`Error: ${err.message}`, { status: 500 });
@@ -130,7 +129,7 @@ async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawCli
 	}
 
 	async function retry() {
-		const tcpSocket = await connectAndWrite(proxyIP || addressRemote, proxyPort || portRemote);
+		const tcpSocket = await connectAndWrite(proxyIP.split(/[:=]/)[0] || addressRemote, proxyIP.split(/[:=]/)[1] || portRemote);
 		tcpSocket.closed.catch(error => {
 			console.log('retry tcpSocket closed error', error);
 		}).finally(() => {
@@ -572,7 +571,7 @@ async function handleTCPOutBound2(remoteSocket, addressRemote, portRemote, rawCl
     return tcpSocket2;
   }
   async function retry() {
-    const tcpSocket2 = await connectAndWrite(proxyIP || addressRemote, proxyPort || portRemote);
+    const tcpSocket2 = await connectAndWrite(proxyIP.split(/[:=]/)[0] || addressRemote, proxyIP.split(/[:=]/)[1] || portRemote);
     tcpSocket2.closed
       .catch((error) => {
         console.log("retry tcpSocket closed error", error);
@@ -684,4 +683,4 @@ function safeCloseWebSocket2(socket) {
   } catch (error) {
     console.error("safeCloseWebSocket2 error", error);
   }
-				}
+		}
