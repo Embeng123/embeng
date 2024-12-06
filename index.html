@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Embeng XYZ Checker</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        form { margin-bottom: 20px; }
+        textarea, input { width: 100%; padding: 10px; margin-bottom: 10px; }
+        button { padding: 10px 20px; }
+        .result { margin-top: 20px; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Embeng XYZ Checker</h1>
+    <div>
+        <h2>Request OTP</h2>
+        <form id="otpForm">
+            <input type="text" id="msisdn" placeholder="Enter MSISDN (e.g., 081917150019)" required>
+            <button type="submit">Request OTP</button>
+        </form>
+        <div id="otpResult" class="result"></div>
+    </div>
+    <div>
+        <h2>Login with OTP</h2>
+        <form id="loginForm">
+            <input type="text" id="loginMsisdn" placeholder="Enter MSISDN (e.g., 081917150019)" required>
+            <input type="text" id="otp" placeholder="Enter OTP" required>
+            <button type="submit">Login</button>
+        </form>
+        <div id="loginResult" class="result"></div>
+    </div>
+    <div>
+        <h2>Check Quota</h2>
+        <form id="quotaForm">
+            <input type="text" id="accessToken" placeholder="Enter Access Token" required>
+            <button type="submit">Check Quota</button>
+        </form>
+        <div id="quotaResult" class="result"></div>
+    </div>
+    <div>
+        <h2>Check MSISDN</h2>
+        <form id="cekMsisdnForm">
+            <input type="text" id="cekMsisdn" placeholder="Enter MSISDN (e.g., 081917150019)" required>
+            <button type="submit">Check MSISDN</button>
+        </form>
+        <div id="cekMsisdnResult" class="result"></div>
+    </div>
+
+    <script>
+        const handleSubmit = async (event, form, resultId, action) => {
+            event.preventDefault();
+            const formData = new FormData(form);
+            const data = {};
+            formData.forEach((value, key) => {
+                data[key] = value;
+            });
+            data.action = action;
+
+            try {
+                const response = await fetch('https://your-cloudflare-worker-url', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const responseData = await response.json();
+                const resultContainer = document.getElementById(resultId);
+                resultContainer.innerHTML = '';
+
+                if (!responseData.status) {
+                    resultContainer.innerHTML = `<div class="error">${responseData.message}</div>`;
+                    return;
+                }
+
+                resultContainer.innerHTML += `<h3>${responseData.message}</h3>`;
+                if (responseData.data) {
+                    let dataHTML = '<pre>';
+                    for (let key in responseData.data) {
+                        if (typeof responseData.data[key] === 'object') {
+                            dataHTML += `${key}:\n`;
+                            for (let subKey in responseData.data[key]) {
+                                dataHTML += `  ${subKey}: ${responseData.data[key][subKey]}\n`;
+                            }
+                        } else {
+                            dataHTML += `${key}: ${responseData.data[key]}\n`;
+                        }
+                    }
+                    dataHTML += '</pre>';
+                    resultContainer.innerHTML += dataHTML;
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                const resultContainer = document.getElementById(resultId);
+                resultContainer.innerHTML = `<div class="error">An error occurred while processing your request.</div>`;
+            }
+        };
+
+        document.getElementById('otpForm').addEventListener('submit', function(event) {
+            handleSubmit(event, this, 'otpResult', 'request_otp');
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', function(event) {
+            handleSubmit(event, this, 'loginResult', 'login_otp');
+        });
+
+        document.getElementById('quotaForm').addEventListener('submit', function(event) {
+            handleSubmit(event, this, 'quotaResult', 'check_quota');
+        });
+
+        document.getElementById('cekMsisdnForm').addEventListener('submit', function(event) {
+            handleSubmit(event, this, 'cekMsisdnResult', 'cek_msisdn');
+        });
+    </script>
+</body>
+  </html>
